@@ -1,10 +1,17 @@
-# Identify daily avg. flow thresholds for bypass flows
-# Laura Twardochleb
-# 6/8/2023
+---
+title: "Outflow_for_bypass_flows"
+author: "Laura Twardochleb"
+date: "2023-06-20"
+output: pdf_document
+---
 
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
 
-# 1. Global Code and Functions -----------------------------------------------
+## 1. Global Code and Functions 
 
+```{r}
 library(tidyverse)
 library(lubridate)
 library(here)
@@ -18,9 +25,11 @@ fp_output <- here("figs_tables")
 
 # Define file path in the repository for dayflow data
 fp_outflow <- here("data")
+```
 
-# 2. Import and Prepare Data --------------------------------------------------
+# 2. Import and Prepare Data from Dayflow
 
+```{r}
 # Import data
 outflow_1996 <- read_csv(file.path(fp_outflow, "dayflow-results-1984-1996.csv"))
 outflow_2020 <- read_csv(file.path(fp_outflow, "dayflow-results-1997-2020.csv"))
@@ -40,10 +49,11 @@ outflow<-full_join(outflow_1996, outflow_2020)%>%
                                  seasonal_outflow<47000 ~ 0))%>%#identify year_season above 47,000 cfs
   mutate(lower_bookend=case_when(seasonal_outflow>=29200 ~ 1,
                                  seasonal_outflow<29200 ~ 0))#identify year_season above 29,200 cfs
-  
-  
-# 3. Explore distributions of outflow, exports over time --------------------------------------------------
+```
 
+# 3. Explore outflow, exports over time 
+
+```{r}
 #visually assess stationarity of exports over last 20-30 years 
 outflow%>%ggplot()+geom_point(aes(x=year_season, y=seasonal_export))
 
@@ -63,17 +73,16 @@ outflow%>%filter(Season=="Winter_Spring")%>%filter(seasonal_outflow>=29200&47000
 outflow%>%filter(Season=="Winter_Spring")%>%ggplot()+geom_point(aes(x=year_season, y=seasonal_outflow))
 
 outflow%>%filter(Season=="Winter_Spring")%>%ggplot()+geom_point(aes(x=OUT, y=seasonal_outflow))
+```
 
-# 4. Predict seasonal outflow using daily average outflow -------------------------------------------------------------------
-#set up glms for seasonal outflow~daily avg. delta outflow for two bookends
-
+# 4. Predict seasonal outflow using daily average outflow 
+```{r}
 #logistic regression for lower bookend
 spring_outflow<-outflow%>%filter(Season=="Winter_Spring")
 
 lower_bookend<-glm(lower_bookend~OUT, family="binomial", data=spring_outflow)
 lower_bookend
 summary(lower_bookend)
-plot(lower_bookend) #potentially a few outliers
 
 #assess model fit
 
@@ -82,16 +91,18 @@ library(DHARMa)
 testDispersion(lower_bookend)
 
 simres_lower <- simulateResiduals(lower_bookend)
-plot(simres_lower) #also shows a few outliers
+plot(simres_lower) #shows a few potential outliers
 
 hist(spring_outflow$lower_bookend) 
-
-testZeroInflation(simres_lower)
 
 #what are the outflow values that get you 29,200 cfs of outflow?
 LD50=-lower_bookend$coefficients[1]/lower_bookend$coefficients[2]
 LD75= (log(.75/(1-.75))-lower_bookend$coefficients[1])/lower_bookend$coefficients[2]
 LD99= (log(.99/(1-.99))-lower_bookend$coefficients[1])/lower_bookend$coefficients[2]
+
+LD50
+LD75
+LD99
 
 #define function to calculate LD values
 LDfunc <- function(x, y, z){
@@ -102,33 +113,15 @@ LDfunc <- function(x, y, z){
 LD<-list(seq(from=0.10, to=0.99, length.out=90))
 LDs_lower_bookend<-mapply(LDfunc, x=LD, y=lower_bookend$coefficients[1], z=lower_bookend$coefficients[2])
 
-#try re-running the lower bookend model without the outliers
-springoutflow2<-spring_outflow[-c(5874:5876),]
-
-lower_bookend2<-glm(lower_bookend~OUT, family="binomial", data=springoutflow2)
-lower_bookend2
-summary(lower_bookend2)
-plot(lower_bookend2) #potentially a few outliers
-
-simres_lower2 <- simulateResiduals(lower_bookend2)
-plot(simres_lower2) #also shows a few outliers
-
-hist(springoutflow2$lower_bookend) 
-
-LD50.2=-lower_bookend2$coefficients[1]/lower_bookend2$coefficients[2]
-LD75.2= (log(.75/(1-.75))-lower_bookend2$coefficients[1])/lower_bookend2$coefficients[2]
-LD99.2= (log(.99/(1-.99))-lower_bookend2$coefficients[1])/lower_bookend2$coefficients[2]
-
 #logistic regression for upper bookend
 upper_bookend<-glm(upper_bookend~OUT, family="binomial", data=spring_outflow)
 upper_bookend
 summary(upper_bookend)
-plot(upper_bookend) #potentially a few outliers
 
 #assess model fit
 
 simres_upper <- simulateResiduals(upper_bookend)
-plot(simres_upper) #apperas to be one outlier
+plot(simres_upper) #potentially one outlier
 
 hist(spring_outflow$upper_bookend)
 
@@ -136,34 +129,50 @@ hist(spring_outflow$upper_bookend)
 LD50upper=-upper_bookend$coefficients[1]/upper_bookend$coefficients[2]
 LDs_upper_bookend<-mapply(LDfunc, x=LD, y=upper_bookend$coefficients[1], z=upper_bookend$coefficients[2])
 
+LD50upper
+
+LDs_upper_bookend<-mapply(LDfunc, x=LD, y=upper_bookend$coefficients[1], z=upper_bookend$coefficients[2])
+
 #bind the lists together into a dataframe of upper and lower bookend LDs
 LD_upper_lower<-as.data.frame(cbind(LDs_lower_bookend, LDs_upper_bookend, unlist(LD)))
 
 colnames(LD_upper_lower)<-c("lower_bookend", "upper_bookend", "percent")
+```
 
-# 5. Prepare figures of outflow and LDs ------------------------------------------------------------------------------------
+# 5. Prepare figures of outflow and LDs
 
+```{r, fig.cap="Logistic regression for 29,200 cfs Jan-June outflow"}
 #plot modeled data- lower bookend
-lower_plot<-ggplot(spring_outflow, aes(x=OUT, y=lower_bookend)) + geom_point() +
+ggplot(spring_outflow, aes(x=OUT, y=lower_bookend)) + geom_point() +
 stat_smooth(method="glm", color="blue", se=FALSE,
             method.args = list(family=binomial))
+```
 
+```{r, fig.caption="Percent of years >= 29,000 cfs Jan-June outflow"}
 #plot LD data- lower bookend
-LD_lower_plot<-ggplot(LD_upper_lower, aes(x=lower_bookend, y=percent)) + geom_point() +
+ggplot(LD_upper_lower, aes(x=lower_bookend, y=percent)) + geom_point() +
   stat_smooth(method="glm", color="blue", se=FALSE,
               method.args = list(family=binomial))+ 
   geom_vline(xintercept=31291.9096,linetype=2)+
   geom_vline(xintercept=46598.3098,linetype=2)+
   ylab("Percent")+xlab("Daily avg. flow (cfs)")
+```
 
+
+```{r, fig.cap="Logistic regression for 47,000 cfs Jan-June outflow"}
 #plot modeled data- upper bookend
-upper_plot<-ggplot(spring_outflow, aes(x=OUT, y=upper_bookend)) + geom_point() +
+ggplot(spring_outflow, aes(x=OUT, y=upper_bookend)) + geom_point() +
   stat_smooth(method="glm", color="blue", se=FALSE,
               method.args = list(family=binomial))
+```
+
+```{r, fig.caption="Percent of years >= 47,000 cfs Jan-June outflow"}
 #plot LD data- upper bookend
-LD_upper_plot<-ggplot(LD_upper_lower, aes(x=upper_bookend, y=percent)) + geom_point() +
+ggplot(LD_upper_lower, aes(x=upper_bookend, y=percent)) + geom_point() +
   stat_smooth(method="glm", color="blue", se=FALSE,
               method.args = list(family=binomial))+
   geom_vline(xintercept=65973.43,linetype=2)+
   geom_vline(xintercept=93414.52,linetype=2)+
   ylab("Percent")+xlab("Daily avg. flow (cfs)")
+```
+
